@@ -18,7 +18,7 @@
 #define STOPBITS 2                     //Either 1 or 2
 #define TXDELAY 25                     //Transmit-Delay in bit
 #define RTTY_BAUD 50                   //Baud rate, max = 600
-#define RADIO_FREQUENCY 145.300        //Transmit frequency in MHz
+#define RADIO_FREQUENCY 434.500        //Transmit frequency in MHz
 #define RTTY_SHIFT 440                 //RTTY shift in Hz (varies, differs also on 2m and 70cm)
                                        //490 = 450 Hz @ 434.500 Mhz
                                        //440 = 425 Hz @ 145.300 Mhz

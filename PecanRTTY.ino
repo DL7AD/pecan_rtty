@@ -22,18 +22,18 @@
   * The software will transmit following sentence. Example for D-1:
   * $$D-1,16,18:22:48,52.31930,13.64217,583,4,13,100041,1.104*AD28
   * 
-  *               Format      Value
-  * Callsign      String      D-1
-  * Count         Integer     16
-  * Time          00:00:00    18:22:48
-  * Latitude      Integer     52.31930
-  * Longitude     Integer     13.64217
-  * Altitude      Integer     583
-  * Satellites    Integer     4
-  * Temperature   Integer     13
-  * Pressure      Integer     100041
-  * Voltage       Integer     1.104
-  * CRC           -           AD28
+  *               Format      Value      Unit
+  * Callsign      String      D-1        -
+  * Count         Integer     16         -
+  * Time          00:00:00    18:22:48   -
+  * Latitude      Integer     52.31930   °
+  * Longitude     Integer     13.64217   °
+  * Altitude      Integer     583        Meter
+  * Satellites    Integer     4          -
+  * Temperature   Integer     13         Celcius
+  * Pressure      Integer     100041     Pascal
+  * Voltage       Integer     1.104      Volt
+  * CRC           -           AD28       -
   * --------------------------------------------------------------------------------
   * Known issues
   * 
@@ -94,7 +94,7 @@
                                         //127 20dBm  (100mW max)
 
 //Global Variables
-Si446x radio1(RADIO_PIN);               //Radio object
+Si446x radio(RADIO_PIN);               //Radio object
 uint8_t buf[60];                        //GPS String buffer
 char txstring[100];                     //Transmitting buffer
 volatile int txstringlength =  0;       //Transmitting buffer length
@@ -109,8 +109,6 @@ uint8_t lock = 0;                       //GPS lock
                                         //0 = Invalid lock
                                         //3 = Valid lock
 
-int navmode = 0;                        //
-int battv = 0;                          //
 int GPSerror = 0;                       //GPS error code
 
 uint8_t hour = 0;                       //Hour of day
@@ -159,12 +157,12 @@ void setup() {
 void loop() {
   //Single beep on radio
   for(int i=0; i<30; i++) {
-    radio1.ptt_on();
-    radio1.setHighTone();
+    radio.ptt_on();
+    radio.setHighTone();
     delay(20);
-    radio1.setLowTone();
+    radio.setLowTone();
     delay(80);
-    radio1.stop_tx();
+    radio.stop_tx();
     delay(3600);
   }
   
@@ -177,16 +175,16 @@ void loop() {
   int gpsLoops = 0;
   do {
     //Beep
-    radio1.ptt_on();
-    radio1.setHighTone();
+    radio.ptt_on();
+    radio.setHighTone();
     delay(20);
-    radio1.setLowTone();
+    radio.setLowTone();
     delay(80);
-    radio1.setHighTone();
+    radio.setHighTone();
     delay(80);
-    radio1.setLowTone();
+    radio.setLowTone();
     delay(80);
-    radio1.stop_tx();
+    radio.stop_tx();
     delay(2300);
     
     //Request data from GPS
@@ -197,25 +195,32 @@ void loop() {
   digitalWrite(GPS_POWER_PIN, LOW);
   
   //Triple beep on radio
-  radio1.ptt_on();
-  radio1.setHighTone();
+  radio.ptt_on();
+  radio.setHighTone();
   delay(20);
-  radio1.setLowTone();
+  radio.setLowTone();
   delay(80);
-  radio1.setHighTone();
+  radio.setHighTone();
   delay(80);
-  radio1.setLowTone();
+  radio.setLowTone();
   delay(80);
-  radio1.setHighTone();
+  radio.setHighTone();
   delay(80);
-  radio1.setLowTone();
+  radio.setLowTone();
   delay(80);
-  radio1.stop_tx();
+  radio.stop_tx();
   delay(2200);
   
+  //Forming Transmission String
+  sprintf(txstring, "$$$$$%s,%ld,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d", CALLSIGN, count, hour, minute, second,lat < 0 ? "-" : "",lat_int,lat_dec,lon < 0 ? "-" : "",lon_int,lon_dec, alt,sats);
+  sprintf(txstring, "%s,%d,%ld,%ld.%03ld", txstring, bmp085temp, bmp085pressure, bat_mv / 1000l, bat_mv % 1000l);
+  sprintf(txstring, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
+  txstringlength = strlen(txstring);
+  
   //Transmitting data by interrupt function
-  radio1.ptt_on();
-  txstatus = 3;
+  radio.ptt_on();
+  txj = 0;
+  txstatus = 6;
   
   //Wait until data is sent by interrupt function
   while(txstatus != 0)
@@ -236,6 +241,7 @@ void setupGPS() {
   delay(500);
   setGPS_DynamicModel6();
 }
+
 /**
   * Transmits a message to the UBlox module
   * @param MSG Message
@@ -250,32 +256,9 @@ void sendUBX(uint8_t *MSG, uint8_t len) {
   }
 }
 
-uint8_t gps_check_nav(void) {
-  uint8_t request[8] = {
-    0xB5, 0x62, 0x06, 0x24, 0x00, 0x00, 0x2A, 0x84
-  };
-  sendUBX(request, 8);
-
-  //Receive message from the GPS
-  gps_get_data();
-
-  //Verify sync and header bytes
-  if(buf[0] != 0xB5 || buf[1] != 0x62) {
-    GPSerror = 41;
-  }
-  if(buf[2] != 0x06 || buf[3] != 0x24) {
-    GPSerror = 42;
-  }
-  
-  //Check message checksum
-  if(!_gps_verify_checksum(&buf[2], 40)) {
-    GPSerror = 43;
-  }
-  
-  //Return navigation mode and let the caller analyse it
-  navmode = buf[8];
-}
-
+/**
+  * Reads the returned data from the GPS into the buffer
+  */
 void gps_get_data() {
   Serial.flush();
   
@@ -411,22 +394,6 @@ void setGPS_DynamicModel6() {
   }
 }
 
-void setGPS_DynamicModel3() {
-  int gps_set_sucess = 0;
-  uint8_t setdm3[] = {
-    0xB5, 0x62, 0x06, 0x24, 0x24, 0x00, 0xFF, 0xFF,
-    0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x10, 0x27,
-    0x00, 0x00, 0x05, 0x00, 0xFA, 0x00, 0xFA, 0x00,
-    0x64, 0x00, 0x2C, 0x01, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x13, 0x76
-  };
-  while(!gps_set_sucess) {
-    sendUBX(setdm3, sizeof(setdm3) / sizeof(uint8_t));
-    gps_set_sucess=getUBX_ACK(setdm3);
-  }
-}
-
 void gps_get_position() {
   GPSerror = 0;
   Serial.flush();
@@ -502,6 +469,10 @@ void gps_get_time() {
   }
 }
 
+/**
+  * Performing a Cyclic Redundancy Check on the CRC16 method to the data
+  * @param string Data
+  */
 uint16_t gps_CRC16_checksum(char *string) {
   size_t i;
   uint16_t crc;
@@ -519,19 +490,7 @@ uint16_t gps_CRC16_checksum(char *string) {
 }
 
 ISR(TIMER1_COMPA_vect) {
-  switch(txstatus) {
-    case 3: //Forming transmission string
-      sprintf(txstring, "$$$$$%s,%ld,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d", CALLSIGN, count, hour, minute, second,lat < 0 ? "-" : "",lat_int,lat_dec,lon < 0 ? "-" : "",lon_int,lon_dec, alt,sats);
-      sprintf(txstring, "%s,%d,%ld,%ld.%03ld", txstring, bmp085temp, bmp085pressure, bat_mv / 1000l, bat_mv % 1000l);
-      sprintf(txstring, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
-      
-      txstringlength = strlen(txstring);
-      txstatus = 6;
-      txj = 0;
-      
-      txstatus = 6;
-      break;
-      
+  switch(txstatus) {      
     case 6: //TX-delay
       txj++;
       if(txj > TXDELAY) { 
@@ -544,13 +503,13 @@ ISR(TIMER1_COMPA_vect) {
       if(txj < txstringlength) {
         txc = txstring[txj]; //Select char
         txj++;
-        txstatus = 8;
-        rtty_txbit(0); //Start Bit (Synchronizing)
+        radio.setLowTone(); //Start Bit (Synchronizing)
         txi = 0;
+        txstatus = 8;
       } else {
-        txstatus = 0; //Finished to transmit char
         txj = 0;
         count++;
+        txstatus = 0; //Finished to transmit char
       }
       break;
     
@@ -558,69 +517,64 @@ ISR(TIMER1_COMPA_vect) {
       if(txi < ASCII) {
         txi++;
         if(txc & 1) {
-          rtty_txbit(1);
+          radio.setHighTone();
         } else {
-          rtty_txbit(0);
+          radio.setLowTone();
         }
         txc = txc >> 1;
       } else {
-        rtty_txbit(1); //Stop Bit
-        txstatus = 9;
+        radio.setHighTone(); //Stop Bit
         txi = 0;
+        txstatus = 9;
       }
       break;
     
     case 9:
       if(STOPBITS == 2)
-        rtty_txbit(1); //Stop Bit
+        radio.setHighTone(); //Stop Bit
       txstatus = 7;
   }
 }
 
-void rtty_txbit(int bit) {
-  if(bit) {
-    radio1.setHighTone();
-  } else {
-    radio1.setLowTone();
-  }
-}
-
 void setupRadio() {
-  radio1.initSPI();
-  radio1.setFrequency(RADIO_FREQUENCY);
-  radio1.setShift(RTTY_SHIFT);
-  radio1.setPowerLevel(RADIO_POWER);
-  radio1.init();
+  radio.initSPI();
+  radio.setFrequency(RADIO_FREQUENCY);
+  radio.setShift(RTTY_SHIFT);
+  radio.setPowerLevel(RADIO_POWER);
+  radio.init();
 }
 
 void resetGPS() {
   uint8_t set_reset[] = {
-    0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0xFF, 0x87, 0x00, 0x00, 0x94, 0xF5
+    0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0xFF, 0x87,
+    0x00, 0x00, 0x94, 0xF5
   };
-  sendUBX(set_reset, sizeof(set_reset)/sizeof(uint8_t));
+  sendUBX(set_reset, sizeof(set_reset) / sizeof(uint8_t));
 }
 void prepare_data() {
+  //Check for GPS lock
   int i = 0;
   do {
     gps_check_lock();
   } while(GPSerror != 0 && i++ < 10);
   
+  //Check for GPS position
   i = 0;
   do {
     gps_get_position();
   } while(GPSerror != 0 && i++ < 10);
   
+  //Check for GPS time
   i = 0;
   do {
     gps_get_time();
   } while(GPSerror != 0 && i++ < 10);
 
-  bmp085temp = bmp085GetTemperature(bmp085ReadUT()) / 10; // Must read temperature from BMP085 before you can read pressure!
-  bmp085pressure = bmp085GetPressure(bmp085ReadUP());
-  bat_mv = getUBatt();
+  bmp085temp = bmp085GetTemperature(bmp085ReadUT()) / 10; //Get Temperature (must be read, before you can read pressure)
+  bmp085pressure = bmp085GetPressure(bmp085ReadUP());     //Get Pressure
+  bat_mv = getUBatt();                                    //Get Battery Voltage
   
 }
-
 
 void initialise_interrupt() {
   // initialize Timer1
@@ -640,8 +594,8 @@ void initialise_interrupt() {
 void blinkled(int blinks) {
   for(int i = 0; i <= blinks; i++) {
     digitalWrite(STATUS_LED, HIGH);
-    delay(500);
+    delay(300);
     digitalWrite(STATUS_LED, LOW);
-    delay(500);
+    delay(300);
   }    
 }

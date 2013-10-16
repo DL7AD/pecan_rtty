@@ -1,7 +1,61 @@
 /**
-  * I dont write so much stuff to this file!
-  * Just keep the code tidy and remove everything
-  * that is useless for the tracker!
+  * This is the RTTY driven firmware for the Pecan Pico 4 which is developed
+  * by Thomas Krahn. The initial Software will transmit one GPS position every
+  * three to five minutes with 10mW.
+  * The transmitter chip beeing used, is a Si4464, which is able to cover a
+  * frequency range from 119 MHz until 1050 MHz at 100mW max.
+  * --------------------------------------------------------------------------------
+  * Loop Actions
+  * 
+  * After the software started, it will remain in a loop doing folloing steps:
+  *     - Transmitting 30 single RTTY Beeps every 5 seconds        150 seconds
+  *     - Switch on GPS
+  *     - Transmitting Double RTTY Beeps every 5 seconds until    ~ 15 seconds
+  *       GPS locks but 30 Beeps max.
+  *     - Switch off
+  *     - Triple RTTY Beep one time                                  5 seconds
+  *     - Transmitting one packet of acquired data                  10 seconds
+  *                                                              = 180 seconds for one cycle
+  * --------------------------------------------------------------------------------
+  * Transmission Sentence
+  * 
+  * The software will transmit following sentence. Example for D-1:
+  * $$D-1,16,18:22:48,52.31930,13.64217,583,4,13,100041,1.104*AD28
+  * 
+  *               Format      Value
+  * Callsign      String      D-1
+  * Count         Integer     16
+  * Time          00:00:00    18:22:48
+  * Latitude      Integer     52.31930
+  * Longitude     Integer     13.64217
+  * Altitude      Integer     583
+  * Satellites    Integer     4
+  * Temperature   Integer     13
+  * Pressure      Integer     100041
+  * Voltage       Integer     1.104
+  * CRC           -           AD28
+  * --------------------------------------------------------------------------------
+  * Known issues
+  * 
+  * The Pecan has an error depending on its design. Sometimes it happens, Serial
+  * transmissions between GPS and ATMega will not work. The ATMega will get broken
+  * data indicated by the CRC Check. In this case, the tracker retries to get
+  * the Position or Time data up to 10 times. In order to get the data again,
+  * Double Beeps sometimes have a delay.
+  * 
+  * MAX6 and MAX7 have a random hopping caused by switching it off in the sleep
+  * intervals. This can be avoided by let it switched on for the whole time, which
+  * is not recommended, because its the part on the PCB consuming the most power.
+  * --------------------------------------------------------------------------------
+  * @file PecanAva.ino
+  * @version 2.0
+  * @author Sven Steudte
+  * 
+  * Some other authors created parts of the code before
+  * 
+  * @author Anthony Stirk   Interrupt method
+  * @author Jon Sowman      GPS Decoding
+  * @author Thomas Krahn    First version
   */
 
 #include <avr/io.h>
@@ -13,69 +67,66 @@
 #include "Si446x.h"
 
 //Tracker Configuration
-#define CALLSIGN "D-1"                 //Callsign
-#define ASCII 7                        //ASCII 7 or 8
-#define STOPBITS 2                     //Either 1 or 2
-#define TXDELAY 25                     //Transmit-Delay in bit
-#define RTTY_BAUD 50                   //Baud rate, max = 600
-#define RADIO_FREQUENCY 434.500        //Transmit frequency in MHz
-#define RTTY_SHIFT 440                 //RTTY shift in Hz (varies, differs also on 2m and 70cm)
-                                       //490 = 450 Hz @ 434.500 Mhz
-                                       //440 = 425 Hz @ 145.300 Mhz
+#define CALLSIGN "D-1"                  //Callsign
+#define ASCII 7                         //ASCII 7 or 8
+#define STOPBITS 2                      //Either 1 or 2
+#define TXDELAY 25                      //Transmit-Delay in bit
+#define RTTY_BAUD 50                    //Baud rate, max = 600
+#define RADIO_FREQUENCY 145.300         //Transmit frequency in MHz
+#define RTTY_SHIFT 440                  //RTTY shift in Hz (varies, differs also on 2m and 70cm)
+                                        //490 = 450 Hz @ 434.500 Mhz
+                                        //440 = 425 Hz @ 145.300 Mhz
 
 
 //PCB Configuration
-#define RADIO_PIN 10                   //CS pin that defines the SPI slave
-#define RADIO_SDN RADIO_SDN_PIN        //Pin to power off the transmitter
+#define RADIO_PIN 10                    //CS pin that defines the SPI slave
+#define RADIO_SDN RADIO_SDN_PIN         //Pin to power off the transmitter
 
-#define STATUS_LED 13                  //Status LED (Green)
-#define GPS_POWER_PIN 5                //On Pecan boards the uBlox GPS has its own regulator that needs to get enabled.
-#define GPS_RESET_PIN 9                //Pull this pin to LOW to reset the GPS
+#define STATUS_LED 13                   //Status LED (Green)
+#define GPS_POWER_PIN 5                 //On Pecan boards the uBlox GPS has its own regulator that needs to get enabled.
+#define GPS_RESET_PIN 9                 //Pull this pin to LOW to reset the GPS
 
-#define RADIO_POWER 20                 //6    0dBm  (1mW)
-                                       //16   8dBm  (6mW)
-                                       //20  10dBm  (10mW)
-                                       //32  14dBm  (25mW)
-                                       //40  17dBm  (50mW)
-                                       //127 20dBm  (100mW max)
+#define RADIO_POWER 20                  //6    0dBm  (1mW)
+                                        //16   8dBm  (6mW)
+                                        //20  10dBm  (10mW)
+                                        //32  14dBm  (25mW)
+                                        //40  17dBm  (50mW)
+                                        //127 20dBm  (100mW max)
 
 //Global Variables
-Si446x radio1(RADIO_PIN);              //Radio object
-uint8_t buf[60];                       //GPS String buffer
-char txstring[100];                    //Transmitting buffer
-volatile int txstringlength = 0;       //Transmitting buffer length
-volatile int txstatus = 0;             //Current TX state
+Si446x radio1(RADIO_PIN);               //Radio object
+uint8_t buf[60];                        //GPS String buffer
+char txstring[100];                     //Transmitting buffer
+volatile int txstringlength =  0;       //Transmitting buffer length
+volatile int txstatus = 0;              //Current TX state
 
-volatile char txc;                     //Current Char to be transmitted
-volatile int txi;                      //Dont now what this does!
-volatile int txj;                      //Dont now what this does!
-volatile int count = 1;                //Number of packets transmitted to the ground
+volatile char txc;                      //Current Char to be transmitted
+volatile int txi;                       //
+volatile int txj;                       //
+volatile long count = 1;                //Incremental number of packets transmitted
 
-uint8_t lock = 0;                      //GPS lock
-                                       //0 = Invalid lock
-                                       //3 = Valid lock
+uint8_t lock = 0;                       //GPS lock
+                                        //0 = Invalid lock
+                                        //3 = Valid lock
 
-uint8_t sats = 0;                      //Active satellites used
-uint8_t hour = 0;                      //Hour of day
-uint8_t minute = 0;                    //Minute of hour
-uint8_t second = 0;                    //Second of minute
+int navmode = 0;                        //
+int battv = 0;                          //
+int GPSerror = 0;                       //GPS error code
 
-int navmode = 0;                       //
-int battv = 0;                         //
-int GPSerror = 0;                      //GPS error code
-
-int32_t alt = 0;                       //Altitude
-
-int32_t lat = 0;                       //Latitude
-int32_t lon = 0;                       //Longitude
-int lat_int = 0;                       //Digit before decimal point of Latitude
-int32_t lat_dec = 0;                   //Decimal digits of Latitude
-int lon_int = 0;                       //Digit before decimal point of Longitude
-int32_t lon_dec = 0;                   //Decimal digits of Longitude
-
-short bmp085temp;                      //Internal Temperature of BMP085 (Pressure sensor)
-long bmp085pressure;                   //Air pressure
-long bat_mv;                           //Battery voltage in millivolts
+uint8_t hour = 0;                       //Hour of day
+uint8_t minute = 0;                     //Minute of hour
+uint8_t second = 0;                     //Second of minute
+int32_t lat = 0;                        //Latitude
+int32_t lon = 0;                        //Longitude
+int lat_int = 0;                        //Digit before decimal point of Latitude
+int32_t lat_dec = 0;                    //Decimal digits of Latitude
+int lon_int = 0;                        //Digit before decimal point of Longitude
+int32_t lon_dec = 0;                    //Decimal digits of Longitude
+int32_t alt = 0;                        //Altitude
+uint8_t sats = 0;                       //Active satellites used
+short bmp085temp;                       //Internal Temperature of BMP085 (Pressure sensor)
+long bmp085pressure;                    //Air pressure
+long bat_mv;                            //Battery voltage in millivolts
 
 /**
   * Setup function of the program. Initializes hardware components.
@@ -441,11 +492,9 @@ void gps_get_time() {
   }
 
   if(GPSerror == 0) {
-    if(hour > 23 || minute > 59 || second > 59)
-    {
+    if(hour > 23 || minute > 59 || second > 59) {
       GPSerror = 34;
-    }
-    else {
+    } else {
       hour = buf[22];
       minute = buf[23];
       second = buf[24];
@@ -471,8 +520,8 @@ uint16_t gps_CRC16_checksum(char *string) {
 
 ISR(TIMER1_COMPA_vect) {
   switch(txstatus) {
-    case 3:
-      sprintf(txstring, "$$$$$%s,%i,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d", CALLSIGN, count, hour, minute, second,lat < 0 ? "-" : "",lat_int,lat_dec,lon < 0 ? "-" : "",lon_int,lon_dec, alt,sats);
+    case 3: //Forming transmission string
+      sprintf(txstring, "$$$$$%s,%ld,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d", CALLSIGN, count, hour, minute, second,lat < 0 ? "-" : "",lat_int,lat_dec,lon < 0 ? "-" : "",lon_int,lon_dec, alt,sats);
       sprintf(txstring, "%s,%d,%ld,%ld.%03ld", txstring, bmp085temp, bmp085pressure, bat_mv / 1000l, bat_mv % 1000l);
       sprintf(txstring, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
       
@@ -480,14 +529,10 @@ ISR(TIMER1_COMPA_vect) {
       txstatus = 6;
       txj = 0;
       
-      txstatus = 5;
-      break;
-    
-    case 5:
       txstatus = 6;
       break;
       
-    case 6: //Optional TX-delay
+    case 6: //TX-delay
       txj++;
       if(txj > TXDELAY) { 
         txj = 0;

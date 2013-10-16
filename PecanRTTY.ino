@@ -25,7 +25,7 @@
   *               Format      Value      Unit
   * Callsign      String      D-1        -
   * Count         Integer     16         -
-  * Time          00:00:00    18:22:48   -
+  * Time          Time        18:22:48   -
   * Latitude      Integer     52.31930   °
   * Longitude     Integer     13.64217   °
   * Altitude      Integer     583        Meter
@@ -43,16 +43,16 @@
   * the Position or Time data up to 10 times. In order to get the data again,
   * Double Beeps sometimes have a delay.
   * 
-  * MAX6 and MAX7 have a random hopping caused by switching it off in the sleep
-  * intervals. This can be avoided by let it switched on for the whole time, which
-  * is not recommended, because its the part on the PCB consuming the most power.
+  * The GPS Module MAX6 and MAX7 have a random hopping caused by switching it off in
+  * the sleep intervals. This can be avoided by let it switched on for the whole
+  * time, which is not recommended, because its the part on the PCB consuming the
+  * most power.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.0
+  * @version 2.0.1
   * @author Sven Steudte
   * 
-  * Some other authors created parts of the code before
-  * 
+  * Some other authors created parts of the code before.
   * @author Anthony Stirk   Interrupt method
   * @author Jon Sowman      GPS Decoding
   * @author Thomas Krahn    First version
@@ -71,12 +71,11 @@
 #define ASCII 7                         //ASCII 7 or 8
 #define STOPBITS 2                      //Either 1 or 2
 #define TXDELAY 25                      //Transmit-Delay in bit
-#define RTTY_BAUD 50                    //Baud rate, max = 600
+#define RTTY_BAUD 50                    //Baud rate, max 600
 #define RADIO_FREQUENCY 145.300         //Transmit frequency in MHz
 #define RTTY_SHIFT 440                  //RTTY shift in Hz (varies, differs also on 2m and 70cm)
-                                        //490 = 450 Hz @ 434.500 Mhz
-                                        //440 = 425 Hz @ 145.300 Mhz
-
+                                        //490 = 450 Hz @ 434.500 MHz
+                                        //440 = 425 Hz @ 145.300 MHz
 
 //PCB Configuration
 #define RADIO_PIN 10                    //CS pin that defines the SPI slave
@@ -94,7 +93,7 @@
                                         //127 20dBm  (100mW max)
 
 //Global Variables
-Si446x radio(RADIO_PIN);               //Radio object
+Si446x radio(RADIO_PIN);                //Radio object
 uint8_t buf[60];                        //GPS String buffer
 char txstring[100];                     //Transmitting buffer
 volatile int txstringlength =  0;       //Transmitting buffer length
@@ -132,22 +131,22 @@ long bat_mv;                            //Battery voltage in millivolts
   */
 void setup() {
   //Set Pin mode
-  pinMode(STATUS_LED, OUTPUT);         //Status LED (Green)
-  pinMode(GPS_POWER_PIN, OUTPUT);      //GPS Power
-  pinMode(GPS_RESET_PIN, OUTPUT);      //GPS Reset
-  pinMode(RADIO_SDN, OUTPUT);          //Radio
+  pinMode(STATUS_LED, OUTPUT);          //Status LED (Green)
+  pinMode(GPS_POWER_PIN, OUTPUT);       //GPS Power
+  pinMode(GPS_RESET_PIN, OUTPUT);       //GPS Reset
+  pinMode(RADIO_SDN, OUTPUT);           //Radio
   
-  Serial.begin(9600);                  //Start Serial
+  Serial.begin(9600);                   //Start Serial
   
-  digitalWrite(GPS_POWER_PIN, LOW);    //Power off GPS
-  digitalWrite(GPS_RESET_PIN, HIGH);   //Disable Reset pin of GPS
+  digitalWrite(GPS_POWER_PIN, LOW);     //Power off GPS
+  digitalWrite(GPS_RESET_PIN, HIGH);    //Disable Reset pin of GPS
     
-  digitalWrite(RADIO_SDN, HIGH);       //Power on Radio
-  setupRadio();                        //Setup radio
+  digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
+  setupRadio();                         //Setup radio
   
-  sensors_setup();                     //Setup sensors
+  sensors_setup();                      //Setup sensors
   
-  initialise_interrupt();              //Initialize interrupt
+  initialise_interrupt();               //Initialize interrupt
 }
 
 /**
@@ -171,7 +170,7 @@ void loop() {
   delay(500);
   setupGPS(); //Setup GPS
   
-  //Double beep on radio until aquired GPS lock with 4 satellites (Loop max. 30 times)
+  //Double beep on radio until aquired GPS lock with 4 satellites (Loop max 30 times)
   int gpsLoops = 0;
   do {
     //Beep
@@ -212,9 +211,31 @@ void loop() {
   delay(2200);
   
   //Forming Transmission String
-  sprintf(txstring, "$$$$$%s,%ld,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d", CALLSIGN, count, hour, minute, second,lat < 0 ? "-" : "",lat_int,lat_dec,lon < 0 ? "-" : "",lon_int,lon_dec, alt,sats);
-  sprintf(txstring, "%s,%d,%ld,%ld.%03ld", txstring, bmp085temp, bmp085pressure, bat_mv / 1000l, bat_mv % 1000l);
-  sprintf(txstring, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
+  sprintf(
+    txstring,
+    "$$$$$%s,%ld,%02d:%02d:%02d,%s%i.%05ld,%s%i.%05ld,%ld,%d",
+    CALLSIGN,                                     //Callsign
+    count,                                        //Count
+    hour, minute, second,                         //Time
+    lat < 0 ? "-" : "", lat_int, lat_dec,         //Latitude
+    lon < 0 ? "-" : "", lon_int, lon_dec,         //Longitude
+    alt,                                          //Altitude
+    sats                                          //Satellites
+  );
+  sprintf(
+    txstring,
+    "%s,%d,%ld,%ld.%03ld",
+    txstring,
+    bmp085temp,                                   //Temperature
+    bmp085pressure,                               //Pressure
+    bat_mv / 1000l, bat_mv % 1000l                //Voltage
+  );
+  sprintf(
+    txstring,
+    "%s*%04X\n",
+    txstring,
+    gps_CRC16_checksum(txstring)                  //CRC
+  );
   txstringlength = strlen(txstring);
   
   //Transmitting data by interrupt function
@@ -319,17 +340,17 @@ boolean getUBX_ACK(uint8_t *MSG) {
   }
 
   while(1) {
-    // Test for success
+    //Test for success
     if(ackByteID > 9) { //All packets in order
       return true;
     }
 
-    // Timeout if no valid response in 3 seconds
+    //Timeout if no valid response in 3 seconds
     if(millis() - startTime > 3000) { 
       return false;
     }
 
-    // Make sure data is available to read
+    //Make sure data is available to read
     if(Serial.available()) {
       b = Serial.read();
 
@@ -343,6 +364,9 @@ boolean getUBX_ACK(uint8_t *MSG) {
   }
 }
 
+/**
+  * Checks for GPS lock and updates the global variable 'lock'
+  */
 void gps_check_lock() {
   GPSerror = 0;
   Serial.flush();
@@ -394,6 +418,10 @@ void setGPS_DynamicModel6() {
   }
 }
 
+/**
+  * Requests GPS position and altitude from GPS module and sets the
+  * global variables lon, lon_int, lon_dec, lat, lat_int, lat_dec, alt
+  */
 void gps_get_position() {
   GPSerror = 0;
   Serial.flush();
@@ -436,19 +464,23 @@ void gps_get_position() {
   }
 }
 
+/**
+  * Requests GPS time from GPS module and sets the global variables
+  * hour, minute, second
+  */
 void gps_get_time() {
   GPSerror = 0;
   Serial.flush();
-  // Send a NAV-TIMEUTC message to the receiver
+  //Send a NAV-TIMEUTC message to the receiver
   uint8_t request[8] = {
     0xB5, 0x62, 0x01, 0x21, 0x00, 0x00, 0x22, 0x67
   };
   sendUBX(request, 8);
 
-  // Get the message back from the GPS
+  //Get the message back from the GPS
   gps_get_data();
 
-  // Verify the sync and header bits
+  //Verify the sync and header bits
   if( buf[0] != 0xB5 || buf[1] != 0x62 )
     GPSerror = 31;
   if( buf[2] != 0x01 || buf[3] != 0x21 )
@@ -480,7 +512,7 @@ uint16_t gps_CRC16_checksum(char *string) {
 
   crc = 0xFFFF;
 
-  // Calculate checksum ignoring the first two chars ($$)
+  //Calculate checksum ignoring the first two chars ($$)
   for(i = 5; i < strlen(string); i++) {
     c = string[i];
     crc = _crc_xmodem_update (crc, c);
@@ -489,6 +521,16 @@ uint16_t gps_CRC16_checksum(char *string) {
   return crc;
 }
 
+/**
+  * This is the main transmitting function. It is called 50 times
+  * a second by the interrupt function, when 50 baud Transmitting rate
+  * is set.
+  * The state of the function is defined by the global variable txstatus.
+  * In general this variable is set to 0. Zero defines the state, in
+  * which no action is made (no transmission). The transmission is
+  * initialized with setting the global variable to 6. When transmission
+  * is finished, it will automatically fall back into state 0.
+  */
 ISR(TIMER1_COMPA_vect) {
   switch(txstatus) {      
     case 6: //TX-delay
@@ -536,6 +578,10 @@ ISR(TIMER1_COMPA_vect) {
   }
 }
 
+/**
+  * Initializes the radio and set its specific frequency, shift and
+  * transmission power.
+  */
 void setupRadio() {
   radio.initSPI();
   radio.setFrequency(RADIO_FREQUENCY);
@@ -544,6 +590,9 @@ void setupRadio() {
   radio.init();
 }
 
+/**
+  * Sends a Reset to the GPS Module
+  */
 void resetGPS() {
   uint8_t set_reset[] = {
     0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0xFF, 0x87,
@@ -551,6 +600,13 @@ void resetGPS() {
   };
   sendUBX(set_reset, sizeof(set_reset) / sizeof(uint8_t));
 }
+
+/**
+  * Updates the sensors data in the global variables. Following variables
+  * will be updated by this function: lock, lon, lon_int, lon_dec, lat,
+  * lat_int, lat_dec, alt, hour, minute, second, bmp085temp, bmp085pressure,
+  * bat_mv
+  */
 void prepare_data() {
   //Check for GPS lock
   int i = 0;
@@ -573,24 +629,31 @@ void prepare_data() {
   bmp085temp = bmp085GetTemperature(bmp085ReadUT()) / 10; //Get Temperature (must be read, before you can read pressure)
   bmp085pressure = bmp085GetPressure(bmp085ReadUP());     //Get Pressure
   bat_mv = getUBatt();                                    //Get Battery Voltage
-  
 }
 
+/**
+  * Initializes the interrupt function ISR for transmission
+  * of data.
+  */
 void initialise_interrupt() {
-  // initialize Timer1
-  cli();          // disable global interrupts
-  TCCR1A = 0;     // set entire TCCR1A register to 0
-  TCCR1B = 0;     // same for TCCR1B
-  OCR1A = F_CPU / 1024 / RTTY_BAUD - 1;  // set compare match register to desired timer count:
-  TCCR1B |= (1 << WGM12);   // turn on CTC mode:
-  // Set CS10 and CS12 bits for:
+  //initialize Timer1
+  cli(); //Disable global interrupts
+  TCCR1A = 0; //Set entire TCCR1A register to 0
+  TCCR1B = 0; //Same for TCCR1B
+  OCR1A = F_CPU / 1024 / RTTY_BAUD - 1; //Set compare match register to desired timer count:
+  TCCR1B |= (1 << WGM12); //Turn on CTC mode:
+  //Set CS10 and CS12 bits for:
   TCCR1B |= (1 << CS10);
   TCCR1B |= (1 << CS12);
-  // enable timer compare interrupt:
+  //Enable timer compare interrupt:
   TIMSK1 |= (1 << OCIE1A);
-  sei();          // enable global interrupts
+  sei(); //Enable global interrupts
 }
 
+/**
+  * Lets the Status LED (Green) blink.
+  * @param blinks Number of blinks
+  */
 void blinkled(int blinks) {
   for(int i = 0; i <= blinks; i++) {
     digitalWrite(STATUS_LED, HIGH);

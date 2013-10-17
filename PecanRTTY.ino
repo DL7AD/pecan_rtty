@@ -43,13 +43,16 @@
   * the Position or Time data up to 10 times. In order to get the data again,
   * Double Beeps sometimes have a delay.
   * 
-  * The GPS Module MAX6 and MAX7 have a random hopping caused by switching it off in
-  * the sleep intervals. This can be avoided by let it switched on for the whole
+  * The GPS Module MAX6 and MAX7 have a random hopping caused by switching it off
+  * in the sleep intervals. This can be avoided by let it switched on for the whole
   * time, which is not recommended, because its the part on the PCB consuming the
   * most power.
+  * Most of the incorrect decoded GPS positions are showing huge altitude hoppings.
+  * The error will be detected and eliminated partially by cross checking the GPS
+  * altitude with the pressure altitude.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.0.1
+  * @version 2.1.0b
   * @author Sven Steudte
   * 
   * Some other authors created parts of the code before.
@@ -109,6 +112,7 @@ uint8_t lock = 0;                       //GPS lock
                                         //3 = Valid lock
 
 int GPSerror = 0;                       //GPS error code
+int GPSinvalid = 0;                     //GPS validation
 
 uint8_t hour = 0;                       //Hour of day
 uint8_t minute = 0;                     //Minute of hour
@@ -188,7 +192,7 @@ void loop() {
     
     //Request data from GPS
     prepare_data();
-  } while(sats < 4 && lock != 3 && gpsLoops++ < 30);
+  } while((sats < 4 || lock != 3 || GPSinvalid) && gpsLoops++ < 30);
   
   //Switch off GPS
   digitalWrite(GPS_POWER_PIN, LOW);
@@ -228,7 +232,7 @@ void loop() {
     txstring,
     bmp085temp,                                   //Temperature
     bmp085pressure,                               //Pressure
-    bat_mv / 1000l, bat_mv % 1000l                //Voltage
+    bat_mv / 1000l, bat_mv/10 % 100               //Voltage
   );
   sprintf(
     txstring,
@@ -629,6 +633,11 @@ void prepare_data() {
   bmp085temp = bmp085GetTemperature(bmp085ReadUT()) / 10; //Get Temperature (must be read, before you can read pressure)
   bmp085pressure = bmp085GetPressure(bmp085ReadUP());     //Get Pressure
   bat_mv = getUBatt();                                    //Get Battery Voltage
+  
+  //Validate GPS data by Pressure Altitude
+  long press_alt_cold = (-233.15 / pow(bmp085pressure/101325,1/5.255876) + 233.15) / 0.0065; //Pressure at 233.15K / -40C
+  long press_alt_warm = ( 303.15 / pow(bmp085pressure/101325,1/5.255876) - 303.15) / 0.0065; //Pressure at 303.15K / +30C
+  GPSinvalid = press_alt_warm < alt + 50 || press_alt_cold > alt - 50;                       //50 = GPS error tolerance
 }
 
 /**

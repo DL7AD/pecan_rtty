@@ -52,7 +52,7 @@
   * altitude with the pressure altitude.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.1.0b
+  * @version 2.1.1
   * @author Sven Steudte
   * 
   * Some other authors created parts of the code before.
@@ -113,6 +113,8 @@ uint8_t lock = 0;                       //GPS lock
 
 int GPSerror = 0;                       //GPS error code
 int GPSinvalid = 0;                     //GPS validation
+float press_alt_cold = 0;
+float press_alt_warm = 0;
 
 uint8_t hour = 0;                       //Hour of day
 uint8_t minute = 0;                     //Minute of hour
@@ -192,7 +194,7 @@ void loop() {
     
     //Request data from GPS
     prepare_data();
-  } while((sats < 4 || lock != 3 || GPSinvalid) && gpsLoops++ < 30);
+  } while((sats < 4 || lock != 3 || GPSinvalid) && ++gpsLoops < 30);
   
   //Switch off GPS
   digitalWrite(GPS_POWER_PIN, LOW);
@@ -634,12 +636,12 @@ void prepare_data() {
   bmp085pressure = bmp085GetPressure(bmp085ReadUP());     //Get Pressure
   bat_mv = getUBatt();                                    //Get Battery Voltage
   
-  //Validate GPS data by Pressure Altitude
-  long press_alt_cold = (-233.15 / pow(bmp085pressure/101325,1/5.255876) + 233.15) / 0.0065; //Pressure at 233.15K / -40C
+  //Validate GPS data by Pressure Altitude with 100m tolerance
+  press_alt_cold = (233.15 / pow(bmp085pressure/101325.0,1/5.255876) - 233.15) / 0.0065 - 100; //Pressure at 233.15K / -40C
   if(press_alt_cold < 0)
     press_alt_cold = 0;
-  long press_alt_warm = ( 303.15 / pow(bmp085pressure/101325,1/5.255876) - 303.15) / 0.0065; //Pressure at 303.15K / +30C
-  GPSinvalid = press_alt_warm < alt + 50 || press_alt_cold > alt - 50;                       //50 = GPS error tolerance
+  press_alt_warm = (303.15 / pow(bmp085pressure/101325.0,1/5.255876) - 303.15) / 0.0065 + 100; //Pressure at 303.15K / +30C
+  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt;
 }
 
 /**

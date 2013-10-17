@@ -636,6 +636,8 @@ void prepare_data() {
   
   //Validate GPS data by Pressure Altitude
   long press_alt_cold = (-233.15 / pow(bmp085pressure/101325,1/5.255876) + 233.15) / 0.0065; //Pressure at 233.15K / -40C
+  if(press_alt_cold < 0)
+    press_alt_cold = 0;
   long press_alt_warm = ( 303.15 / pow(bmp085pressure/101325,1/5.255876) - 303.15) / 0.0065; //Pressure at 303.15K / +30C
   GPSinvalid = press_alt_warm < alt + 50 || press_alt_cold > alt - 50;                       //50 = GPS error tolerance
 }

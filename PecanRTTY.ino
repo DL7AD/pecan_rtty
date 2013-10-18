@@ -50,9 +50,12 @@
   * Most of the incorrect decoded GPS positions are showing huge altitude hoppings.
   * The error will be detected and eliminated partially by cross checking the GPS
   * altitude with the pressure altitude.
+  *
+  * GPS Reset Pin consumes 18.3mA current at 1.5V when set high. In order to save
+  * energy it will be set to low when GPS is switched off.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.1.1
+  * @version 2.2b
   * @author Sven Steudte
   * 
   * Some other authors created parts of the code before.
@@ -98,7 +101,7 @@
 //Global Variables
 Si446x radio(RADIO_PIN);                //Radio object
 uint8_t buf[60];                        //GPS String buffer
-char txstring[100];                     //Transmitting buffer
+char txstring[150];                     //Transmitting buffer
 volatile int txstringlength =  0;       //Transmitting buffer length
 volatile int txstatus = 0;              //Current TX state
 
@@ -145,7 +148,7 @@ void setup() {
   Serial.begin(9600);                   //Start Serial
   
   digitalWrite(GPS_POWER_PIN, LOW);     //Power off GPS
-  digitalWrite(GPS_RESET_PIN, HIGH);    //Disable Reset pin of GPS
+  digitalWrite(GPS_RESET_PIN, LOW);     //Enable GPS Reset Pin
     
   digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
   setupRadio();                         //Setup radio
@@ -167,11 +170,12 @@ void loop() {
     delay(20);
     radio.setLowTone();
     delay(80);
-    radio.stop_tx();
-    delay(3600);
+    radio.ptt_off();
+    delay(3525);
   }
   
   //Switch on GPS
+  digitalWrite(GPS_RESET_PIN, HIGH);
   digitalWrite(GPS_POWER_PIN, HIGH);
   delay(500);
   setupGPS(); //Setup GPS
@@ -189,8 +193,8 @@ void loop() {
     delay(80);
     radio.setLowTone();
     delay(80);
-    radio.stop_tx();
-    delay(2300);
+    radio.ptt_off();
+    delay(300);
     
     //Request data from GPS
     prepare_data();
@@ -198,6 +202,7 @@ void loop() {
   
   //Switch off GPS
   digitalWrite(GPS_POWER_PIN, LOW);
+  digitalWrite(GPS_RESET_PIN, LOW);
   
   //Triple beep on radio
   radio.ptt_on();
@@ -213,8 +218,8 @@ void loop() {
   delay(80);
   radio.setLowTone();
   delay(80);
-  radio.stop_tx();
-  delay(2200);
+  radio.ptt_off();
+  delay(3300);
   
   //Forming Transmission String
   sprintf(
@@ -238,7 +243,7 @@ void loop() {
   );
   sprintf(
     txstring,
-    "%s*%04X\n",
+    "%s*%04X\nAF5LI\n\n",
     txstring,
     gps_CRC16_checksum(txstring)                  //CRC
   );

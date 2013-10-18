@@ -55,7 +55,7 @@
   * energy it will be set to low when GPS is switched off.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.2b
+  * @version 2.2.2b
   * @author Sven Steudte
   * 
   * Some other authors created parts of the code before.
@@ -235,11 +235,11 @@ void loop() {
   );
   sprintf(
     txstring,
-    "%s,%d,%ld,%ld.%03ld",
+    "%s,%d,%ld,%ld.%02ld",
     txstring,
     bmp085temp,                                   //Temperature
     bmp085pressure,                               //Pressure
-    bat_mv / 1000l, bat_mv/10 % 100               //Voltage
+    bat_mv / 1000l, (bat_mv/10) % 100             //Voltage
   );
   sprintf(
     txstring,

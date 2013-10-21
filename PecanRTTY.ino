@@ -69,6 +69,8 @@
 #include <util/crc16.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <avr/power.h>
+#include <avr/sleep.h>
 #include "sensors.h"
 #include "Si446x.h"
 
@@ -112,7 +114,7 @@ volatile int txi;                       //
 volatile int txj;                       //
 volatile long count = 1;                //Incremental number of packets transmitted
 
-volatine int wd_counter;				// Watchdog timer
+volatile int wd_counter;				// Watchdog timer
 
 uint8_t lock = 0;                       //GPS lock
                                         //0 = Invalid lock
@@ -156,7 +158,7 @@ void setup() {
     
   digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
   setupRadio();                         //Setup radio
-  setup_watchdog(9);
+  setup_watchdog(8);
   sensors_setup();                      //Setup sensors
   power_adc_disable();
   
@@ -248,6 +250,8 @@ ISR(WDT_vect) {
   * when this function is finished.
   */
 void loop() {
+  disable_tx_interrupt();
+  wd_counter = 0;
   //Single beep on radio
   for(int i=0; i<30; i++) {
     radio.ptt_on();
@@ -256,7 +260,7 @@ void loop() {
     radio.setLowTone();
     delay(80);
     radio.ptt_off();
-    delay(3525);
+    power_save();
   }
   
   //Switch on GPS
@@ -762,11 +766,15 @@ void initialise_interrupt() {
 }
 
 void disable_tx_interrupt() {
+        cli();
 	TIMSK1 &= ~(1 << OCIE1A);
+        sei();
 }
 
 void enable_tx_interrupt() {
+         cli();
 	TIMSK1 |= (1 << OCIE1A);
+        sei();
 }
 
 

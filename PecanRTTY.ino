@@ -98,6 +98,8 @@
                                         //40  17dBm  (50mW)
                                         //127 20dBm  (100mW max)
 
+#define DEBUG
+										
 //Global Variables
 Si446x radio(RADIO_PIN);                //Radio object
 uint8_t buf[60];                        //GPS String buffer
@@ -109,6 +111,8 @@ volatile char txc;                      //Current Char to be transmitted
 volatile int txi;                       //
 volatile int txj;                       //
 volatile long count = 1;                //Incremental number of packets transmitted
+
+volatine int wd_counter;				// Watchdog timer
 
 uint8_t lock = 0;                       //GPS lock
                                         //0 = Invalid lock
@@ -152,10 +156,91 @@ void setup() {
     
   digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
   setupRadio();                         //Setup radio
-  
+  setup_watchdog(9);
   sensors_setup();                      //Setup sensors
+  power_adc_disable();
   
   initialise_interrupt();               //Initialize interrupt
+}
+
+void disable_bod_and_sleep()
+{
+  /* This will turn off brown-out detection while
+* sleeping. Unfortunately this won't work in IDLE mode.
+* Relevant info about BOD disabling: datasheet p.44
+*
+* Procedure to disable the BOD:
+*
+* 1. BODSE and BODS must be set to 1
+* 2. Turn BODSE to 0
+* 3. BODS will automatically turn 0 after 4 cycles
+*
+* The catch is that we *must* go to sleep between 2
+* and 3, ie. just before BODS turns 0.
+*/
+  unsigned char mcucr;
+
+  cli();
+  mcucr = MCUCR | (_BV(BODS) | _BV(BODSE));
+  MCUCR = mcucr;
+  MCUCR = mcucr & (~_BV(BODSE));
+  sei();
+  sleep_mode(); // Go to sleep
+}
+
+void power_save() {
+	/* Enter power saving mode while waiting for the next transmission period.
+	*/
+	// We can go to full SLEEP_MODE_PWR_DOWN.
+	// Only the watchdog interrupt will wake us up.
+	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+
+	sleep_enable();
+	power_adc_disable();
+	power_spi_disable();
+	power_twi_disable();
+	power_timer1_disable();
+
+	#ifdef DEBUG
+	digitalWrite(STATUS_LED, LOW);
+	#endif
+	
+	disable_bod_and_sleep(); // Go to sleep
+
+	#ifdef DEBUG
+	digitalWrite(STATUS_LED, HIGH);
+	#endif
+	
+	sleep_disable(); // Resume after wake up
+	power_all_enable();
+	power_adc_disable();
+  
+}
+
+//****************************************************************
+// 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
+// 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
+void setup_watchdog(int ii) {
+  byte bb;
+  int ww;
+  if (ii > 9 ) ii=9;
+  bb=ii & 7;
+  if (ii > 7) bb|= (1<<5);
+  bb|= (1<<WDCE);
+  ww=bb;
+// Serial.println(ww);
+  MCUSR &= ~(1<<WDRF);
+  // start timed sequence
+  WDTCSR |= (1<<WDCE) | (1<<WDE);
+  // set new watchdog timeout value
+  WDTCSR = bb;
+  WDTCSR |= _BV(WDIE);
+}
+
+//****************************************************************
+// Watchdog Interrupt Service / is executed when watchdog timed out
+ISR(WDT_vect) {
+  wd_counter++; // count the seconds for the sleep period
 }
 
 /**
@@ -253,10 +338,18 @@ void loop() {
   radio.ptt_on();
   txj = 0;
   txstatus = 6;
+  enable_tx_interrupt();
+  
+  set_sleep_mode(SLEEP_MODE_IDLE);
+  sleep_enable();
   
   //Wait until data is sent by interrupt function
   while(txstatus != 0)
-    delay(500);
+    sleep_mode();
+	
+  sleep_disable();
+  disable_tx_interrupt();
+  power_save();
 }
 
 /**
@@ -667,6 +760,15 @@ void initialise_interrupt() {
   TIMSK1 |= (1 << OCIE1A);
   sei(); //Enable global interrupts
 }
+
+void disable_tx_interrupt() {
+	TIMSK1 &= ~(1 << OCIE1A);
+}
+
+void enable_tx_interrupt() {
+	TIMSK1 |= (1 << OCIE1A);
+}
+
 
 /**
   * Lets the Status LED (Green) blink.

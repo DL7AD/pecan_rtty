@@ -4,6 +4,12 @@
   * three to five minutes with 10mW.
   * The transmitter chip beeing used, is a Si4464, which is able to cover a
   * frequency range from 119 MHz until 1050 MHz at 100mW max.
+  * There is also an APRS firmware made by Thomas Krahn. See https://github.com/tkrahn/pecanpico4
+  *
+  * Information  http://kt5tk.wordpress.com/2013/07/24/pecan-pico-4-serial-number-1-built-working/
+  * PCB layout   https://github.com/tkrahn/pecanpico4
+  * 
+  * Running Frequency: 8 MHz
   * --------------------------------------------------------------------------------
   * Loop Actions
   * 
@@ -16,6 +22,19 @@
   *     - Triple RTTY Beep one time                                  5 seconds
   *     - Transmitting one packet of acquired data                  10 seconds
   *                                                              = 180 seconds for one cycle
+  * --------------------------------------------------------------------------------
+  * Sleeping mode
+  *
+  * In this program two interrupt methods are used. The first is used to
+  * synchronize the RTTY baud rate. Its called 50 times a second and can be
+  * intterrupted by disable_tx_interrupt and enabled by enable_tx_interrupt.
+  * The purpose of the second interrupt routine is saving energy. When its
+  * called the microcontroller will fall into Power Down Sleeping Mode and
+  * will return into active mode after 4 seconds. This method is used during
+  * single beeping in the intervals of no operation. This method is not used
+  * during double beeps to keep Serial connection to the GPS module active.
+  * The TX interrupt routine is activated during its RTTY transmission only
+  * when its necessary to activate it.
   * --------------------------------------------------------------------------------
   * Transmission Sentence
   * 
@@ -55,13 +74,13 @@
   * energy it will be set to low when GPS is switched off.
   * --------------------------------------------------------------------------------
   * @file PecanAva.ino
-  * @version 2.2.2b
   * @author Sven Steudte
+  * @author Marius Schiffer
   * 
   * Some other authors created parts of the code before.
-  * @author Anthony Stirk   Interrupt method
+  * @author Anthony Stirk   Interrupt functions
   * @author Jon Sowman      GPS Decoding
-  * @author Thomas Krahn    First version
+  * @author Thomas Krahn    First version, Interrupt functions
   */
 
 #include <avr/io.h>
@@ -76,11 +95,12 @@
 
 //Tracker Configuration
 #define CALLSIGN "D-1"                  //Callsign
+#define SEC_CALLSIGN "AF5LI"            //Secondary Callsign which is sent but not included in the package
 #define ASCII 7                         //ASCII 7 or 8
 #define STOPBITS 2                      //Either 1 or 2
-#define TXDELAY 25                      //Transmit-Delay in bit
-#define RTTY_BAUD 50                    //Baud rate, max 600
-#define RADIO_FREQUENCY 145.300         //Transmit frequency in MHz
+#define TXDELAY 25                      //Transmit-Delay in bits
+#define RTTY_BAUD 50                    //Baud rate (600 max)
+#define RADIO_FREQUENCY 145.300         //Transmit frequency in MHz (119 - 1050 Mhz)
 #define RTTY_SHIFT 440                  //RTTY shift in Hz (varies, differs also on 2m and 70cm)
                                         //490 = 450 Hz @ 434.500 MHz
                                         //440 = 425 Hz @ 145.300 MHz
@@ -100,7 +120,7 @@
                                         //40  17dBm  (50mW)
                                         //127 20dBm  (100mW max)
 
-#define DEBUG
+//#define DEBUG                         //Debug mode (Status LED active when in Power Down Mode)
 										
 //Global Variables
 Si446x radio(RADIO_PIN);                //Radio object
@@ -114,14 +134,13 @@ volatile int txi;                       //
 volatile int txj;                       //
 volatile long count = 1;                //Incremental number of packets transmitted
 
-volatile int wd_counter;				// Watchdog timer
-
 uint8_t lock = 0;                       //GPS lock
                                         //0 = Invalid lock
                                         //3 = Valid lock
 
 int GPSerror = 0;                       //GPS error code
 int GPSinvalid = 0;                     //GPS validation
+int gpsloss = 1;
 float press_alt_cold = 0;
 float press_alt_warm = 0;
 
@@ -153,33 +172,38 @@ void setup() {
   
   Serial.begin(9600);                   //Start Serial
   
-  digitalWrite(GPS_POWER_PIN, LOW);     //Power off GPS
+  digitalWrite(GPS_POWER_PIN, HIGH);    //Power on GPS
   digitalWrite(GPS_RESET_PIN, LOW);     //Enable GPS Reset Pin
+  delay(500);
+  digitalWrite(GPS_RESET_PIN, HIGH);    //Disable GPS Reset Pin
+  delay(500);
+  setupGPS();
     
   digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
   setupRadio();                         //Setup radio
-  setup_watchdog(8);
+  
+  setup_watchdog(8);                    //Setup watchdog (configure 4 sec interrupt)
   sensors_setup();                      //Setup sensors
-  power_adc_disable();
+  power_adc_disable();                  //Disable comparator
   
   initialise_interrupt();               //Initialize interrupt
 }
 
-void disable_bod_and_sleep()
-{
-  /* This will turn off brown-out detection while
-* sleeping. Unfortunately this won't work in IDLE mode.
-* Relevant info about BOD disabling: datasheet p.44
-*
-* Procedure to disable the BOD:
-*
-* 1. BODSE and BODS must be set to 1
-* 2. Turn BODSE to 0
-* 3. BODS will automatically turn 0 after 4 cycles
-*
-* The catch is that we *must* go to sleep between 2
-* and 3, ie. just before BODS turns 0.
-*/
+/**
+  * This will turn off brown-out detection while
+  * sleeping. Unfortunately this won't work in IDLE mode.
+  * Relevant info about BOD disabling: datasheet p.44
+  *
+  * Procedure to disable the BOD:
+  *
+  * 1. BODSE and BODS must be set to 1
+  * 2. Turn BODSE to 0
+  * 3. BODS will automatically turn 0 after 4 cycles
+  *
+  * The catch is that we *must* go to sleep between 2
+  * and 3, ie. just before BODS turns 0.
+  */
+void disable_bod_and_sleep() {
   unsigned char mcucr;
 
   cli();
@@ -187,41 +211,54 @@ void disable_bod_and_sleep()
   MCUCR = mcucr;
   MCUCR = mcucr & (~_BV(BODSE));
   sei();
-  sleep_mode(); // Go to sleep
-}
-
-void power_save() {
-	/* Enter power saving mode while waiting for the next transmission period.
-	*/
-	// We can go to full SLEEP_MODE_PWR_DOWN.
-	// Only the watchdog interrupt will wake us up.
-	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-
-	sleep_enable();
-	power_adc_disable();
-	power_spi_disable();
-	power_twi_disable();
-	power_timer1_disable();
-
-	#ifdef DEBUG
-	digitalWrite(STATUS_LED, LOW);
-	#endif
-	
-	disable_bod_and_sleep(); // Go to sleep
-
-	#ifdef DEBUG
-	digitalWrite(STATUS_LED, HIGH);
-	#endif
-	
-	sleep_disable(); // Resume after wake up
-	power_all_enable();
-	power_adc_disable();
   
+  sleep_mode(); //Go to sleep
 }
 
-//****************************************************************
-// 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
-// 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
+/**
+  * Enter power saving mode while waiting. This function is
+  * using the Power Down Sleep Mode. Only the watchdog interrupt
+  * will wake it up.
+  */
+void power_save() {
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  
+  sleep_enable();
+  power_spi_disable();
+  power_twi_disable();
+  power_timer1_disable();
+  
+  #ifdef DEBUG
+  pinMode(STATUS_LED, OUTPUT);
+  digitalWrite(STATUS_LED, LOW);
+  #endif
+  
+  disable_bod_and_sleep(); //Go to sleep
+  
+  #ifdef DEBUG
+  digitalWrite(STATUS_LED, HIGH);
+  #endif
+  
+  sleep_disable(); //Resume after wake up
+  power_all_enable();
+  power_adc_disable();
+}
+
+/**
+  * Set up watchdog timer. Defines a sleeping time interval.
+  * Interval Modes: 0 = 16 ms
+  *                 1 = 32 ms
+  *                 2 = 64 ms
+  *                 3 = 128 ms
+  *                 4 = 250 ms
+  *                 5 = 500 ms
+  *                 6 = 1 sec
+  *                 7 = 2 sec
+  *                 8 = 4 sec
+  *                 9 = 8 sec
+  *
+  * @param ii Interval Mode
+  */
 void setup_watchdog(int ii) {
   byte bb;
   int ww;
@@ -230,36 +267,39 @@ void setup_watchdog(int ii) {
   if (ii > 7) bb|= (1<<5);
   bb|= (1<<WDCE);
   ww=bb;
-// Serial.println(ww);
   MCUSR &= ~(1<<WDRF);
-  // start timed sequence
+  //Start timed sequence
   WDTCSR |= (1<<WDCE) | (1<<WDE);
-  // set new watchdog timeout value
+  //Set new watchdog timeout value
   WDTCSR = bb;
   WDTCSR |= _BV(WDIE);
 }
 
-//****************************************************************
-// Watchdog Interrupt Service / is executed when watchdog timed out
-ISR(WDT_vect) {
-  wd_counter++; // count the seconds for the sleep period
-}
+
+/**
+  * Watchdog Interrupt Service. This routine is executed when watchdog timed out.
+  */
+ISR(WDT_vect) {}
 
 /**
   * Function which is called by the microcontroller first time, when setup is completed and
   * when this function is finished.
   */
 void loop() {
+  //Disable TX interrupt routine
   disable_tx_interrupt();
-  wd_counter = 0;
+  
   //Single beep on radio
-  for(int i=0; i<30; i++) {
+  for(int i=0; i<38; i++) {
+    //Beep
     radio.ptt_on();
     radio.setHighTone();
     delay(20);
     radio.setLowTone();
     delay(80);
     radio.ptt_off();
+    
+    //Delay
     power_save();
   }
   
@@ -283,15 +323,16 @@ void loop() {
     radio.setLowTone();
     delay(80);
     radio.ptt_off();
-    delay(300);
     
-    //Request data from GPS
+    //Request data from GPS module and pressure sensor
     prepare_data();
-  } while((sats < 4 || lock != 3 || GPSinvalid) && ++gpsLoops < 30);
+    gpsloss = sats < 4 || lock != 3 || GPSinvalid;
+  } while(gpsloss && ++gpsLoops < 38);
   
-  //Switch off GPS
-  digitalWrite(GPS_POWER_PIN, LOW);
-  digitalWrite(GPS_RESET_PIN, LOW);
+  if(!gpsloss) { //Switch off GPS
+    digitalWrite(GPS_POWER_PIN, LOW);
+    digitalWrite(GPS_RESET_PIN, LOW);
+  }
   
   //Triple beep on radio
   radio.ptt_on();
@@ -308,6 +349,8 @@ void loop() {
   radio.setLowTone();
   delay(80);
   radio.ptt_off();
+  
+  //Delay
   delay(3300);
   
   //Forming Transmission String
@@ -332,9 +375,10 @@ void loop() {
   );
   sprintf(
     txstring,
-    "%s*%04X\nAF5LI\n\n",
+    "%s*%04X\n%s\n",
     txstring,
-    gps_CRC16_checksum(txstring)                  //CRC
+    gps_CRC16_checksum(txstring),                 //CRC
+    SEC_CALLSIGN                                  //Secondary Callsign
   );
   txstringlength = strlen(txstring);
   
@@ -342,12 +386,15 @@ void loop() {
   radio.ptt_on();
   txj = 0;
   txstatus = 6;
+  
+  //Enable TX interrupt routine
   enable_tx_interrupt();
   
+  //Set sleep mode to Ilde
   set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
   
-  //Wait until data is sent by interrupt function
+  //Wait until data is sent by TX interrupt routine
   while(txstatus != 0)
     sleep_mode();
 	
@@ -630,14 +677,16 @@ uint16_t gps_CRC16_checksum(char *string) {
 }
 
 /**
-  * This is the main transmitting function. It is called 50 times
-  * a second by the interrupt function, when 50 baud Transmitting rate
-  * is set.
+  * This is the transmitting interrupt routine. It is called 50 times
+  * a second, when 50 baud Transmitting rate is set.
   * The state of the function is defined by the global variable txstatus.
   * In general this variable is set to 0. Zero defines the state, in
   * which no action is made (no transmission). The transmission is
   * initialized with setting the global variable to 6. When transmission
   * is finished, it will automatically fall back into state 0.
+  * This interrupt routine can be enabled and disabled by the functions
+  * disable_tx_interrupt and enable_tx_interrupt. This is neccessary
+  * due to Power Down Sleeping Mode.
   */
 ISR(TIMER1_COMPA_vect) {
   switch(txstatus) {      
@@ -747,8 +796,7 @@ void prepare_data() {
 }
 
 /**
-  * Initializes the interrupt function ISR for transmission
-  * of data.
+  * Initializes the interrupt routine for transmission of data.
   */
 void initialise_interrupt() {
   //initialize Timer1
@@ -765,18 +813,23 @@ void initialise_interrupt() {
   sei(); //Enable global interrupts
 }
 
+/**
+  * Disables the transmission interrupt.
+  */
 void disable_tx_interrupt() {
-        cli();
-	TIMSK1 &= ~(1 << OCIE1A);
-        sei();
+  cli();
+  TIMSK1 &= ~(1 << OCIE1A);
+  sei();
 }
 
+/**
+  * Enables the transmission interrupt.
+  */
 void enable_tx_interrupt() {
-         cli();
-	TIMSK1 |= (1 << OCIE1A);
-        sei();
+  cli();
+  TIMSK1 |= (1 << OCIE1A);
+  sei();
 }
-
 
 /**
   * Lets the Status LED (Green) blink.

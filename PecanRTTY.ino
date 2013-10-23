@@ -184,7 +184,6 @@ void setup() {
   
   setup_watchdog(8);                    //Setup watchdog (configure 4 sec interrupt)
   sensors_setup();                      //Setup sensors
-  power_adc_disable();                  //Disable comparator
   
   initialise_interrupt();               //Initialize interrupt
 }
@@ -241,7 +240,6 @@ void power_save() {
   
   sleep_disable(); //Resume after wake up
   power_all_enable();
-  power_adc_disable();
 }
 
 /**

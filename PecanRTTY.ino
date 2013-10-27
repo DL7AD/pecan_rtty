@@ -173,11 +173,7 @@ void setup() {
   Serial.begin(9600);                   //Start Serial
   
   digitalWrite(GPS_POWER_PIN, HIGH);    //Power on GPS
-  digitalWrite(GPS_RESET_PIN, LOW);     //Enable GPS Reset Pin
-  delay(500);
-  digitalWrite(GPS_RESET_PIN, HIGH);    //Disable GPS Reset Pin
-  delay(500);
-  setupGPS();
+  digitalWrite(GPS_RESET_PIN, HIGH);    //Disable GPS Reset
     
   digitalWrite(RADIO_SDN, HIGH);        //Power on Radio
   setupRadio();                         //Setup radio
@@ -303,6 +299,7 @@ void loop() {
   
   //Switch on GPS
   digitalWrite(GPS_RESET_PIN, HIGH);
+  delay(100);
   digitalWrite(GPS_POWER_PIN, HIGH);
   delay(500);
   setupGPS(); //Setup GPS
@@ -327,10 +324,9 @@ void loop() {
     gpsloss = sats < 4 || lock != 3 || GPSinvalid;
   } while(gpsloss && ++gpsLoops < 38);
   
-  if(!gpsloss) { //Switch off GPS
-    digitalWrite(GPS_POWER_PIN, LOW);
-    digitalWrite(GPS_RESET_PIN, LOW);
-  }
+  digitalWrite(GPS_POWER_PIN, LOW);
+  delay(100);
+  digitalWrite(GPS_RESET_PIN, LOW);
   
   //Triple beep on radio
   radio.ptt_on();

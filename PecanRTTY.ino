@@ -96,7 +96,7 @@
 #include "Si446x.h"
 
 //Tracker Configuration
-#define CALLSIGN "D-1"                  //Callsign
+#define CALLSIGN "D-2"                  //Callsign
 #define SEC_CALLSIGN "AF5LI"            //Secondary Callsign which is sent but not included in the package
 #define ASCII 7                         //ASCII 7 or 8
 #define STOPBITS 2                      //Either 1 or 2

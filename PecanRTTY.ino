@@ -90,6 +90,8 @@
 #include <Wire.h>
 #include <avr/power.h>
 #include <avr/sleep.h>
+#include <math.h>
+
 #include "sensors.h"
 #include "Si446x.h"
 
@@ -105,6 +107,8 @@
                                         //490 = 450 Hz @ 434.500 MHz
                                         //440 = 425 Hz @ 145.300 MHz
 
+#define GPS_MAX_DIST_ERROR 16										
+										
 //PCB Configuration
 #define RADIO_PIN 10                    //CS pin that defines the SPI slave
 #define RADIO_SDN RADIO_SDN_PIN         //Pin to power off the transmitter
@@ -120,8 +124,12 @@
                                         //40  17dBm  (50mW)
                                         //127 20dBm  (100mW max)
 
-//#define DEBUG                         //Debug mode (Status LED active when in Power Down Mode)
 										
+										
+//#define DEBUG                         //Debug mode (Status LED active when in Power Down Mode)
+
+#DEFINE coords2km(lat1,lon1,lat2,lon2) (6378.388 * acos(sin(lat1/180*M_PI) * sin(lat2/180*M_PI) + cos(lat1/180*M_PI) * cos(lat2/180*M_PI) * cos(lon2/180*M_PI - lon1/180*M_PI))
+									
 //Global Variables
 Si446x radio(RADIO_PIN);                //Radio object
 uint8_t buf[60];                        //GPS String buffer
@@ -158,6 +166,10 @@ uint8_t sats = 0;                       //Active satellites used
 short bmp085temp;                       //Internal Temperature of BMP085 (Pressure sensor)
 long bmp085pressure;                    //Air pressure
 long bat_mv;                            //Battery voltage in millivolts
+
+
+float last_lat = -999;
+float last_lon = -999;
 
 /**
   * Setup function of the program. Initializes hardware components.
@@ -323,6 +335,11 @@ void loop() {
     prepare_data();
     gpsloss = sats < 4 || lock != 3 || GPSinvalid;
   } while(gpsloss && ++gpsLoops < 38);
+  
+  if (!GPSinvalid) {
+	last_lon = lon/1e7;
+	last_lat = lat/1e7;
+  }
   
   digitalWrite(GPS_POWER_PIN, LOW);
   delay(100);
@@ -761,6 +778,7 @@ void resetGPS() {
 void prepare_data() {
   //Check for GPS lock
   int i = 0;
+  
   do {
     gps_check_lock();
   } while(GPSerror != 0 && i++ < 10);
@@ -786,7 +804,10 @@ void prepare_data() {
   if(press_alt_cold < 0)
     press_alt_cold = 0;
   press_alt_warm = (303.15 / pow(bmp085pressure/101325.0,1/5.255876) - 303.15) / 0.0065 + 100; //Pressure at 303.15K / +30C
-  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt;
+  
+  
+  
+  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt || (last_lat!=999)?(coords2km(lat/1e7,lon/1e7,last_lat,last_lon) > GPS_MAX_DIST_ERROR):false;
 }
 
 /**

@@ -127,8 +127,6 @@
 										
 										
 //#define DEBUG                         //Debug mode (Status LED active when in Power Down Mode)
-
-#DEFINE coords2km(lat1,lon1,lat2,lon2) (6378.388 * acos(sin(lat1/180*M_PI) * sin(lat2/180*M_PI) + cos(lat1/180*M_PI) * cos(lat2/180*M_PI) * cos(lon2/180*M_PI - lon1/180*M_PI))
 									
 //Global Variables
 Si446x radio(RADIO_PIN);                //Radio object
@@ -769,6 +767,14 @@ void resetGPS() {
   sendUBX(set_reset, sizeof(set_reset) / sizeof(uint8_t));
 }
 
+
+static inline void coords2km(float lat1, float lon1, float lat2, float lon2) {
+	lat1 = lat1/180*M_PI;
+	lat2 = lat2/180*M_PI;
+	lon1 = lon1/180*M_PI;
+	lon2 = lon2/180*M_PI;
+	return 6378.388 * acos(sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon2 - lon1))
+}
 /**
   * Updates the sensors data in the global variables. Following variables
   * will be updated by this function: lock, lon, lon_int, lon_dec, lat,
@@ -807,7 +813,7 @@ void prepare_data() {
   
   
   
-  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt || (last_lat!=999)?(coords2km(lat/1e7,lon/1e7,last_lat,last_lon) > GPS_MAX_DIST_ERROR):false;
+  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt || ((last_lat!=999)?(coords2km(lat/1e7,lon/1e7,last_lat,last_lon) > GPS_MAX_DIST_ERROR):false);
 }
 
 /**

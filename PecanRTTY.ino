@@ -768,12 +768,12 @@ void resetGPS() {
 }
 
 
-static inline void coords2km(float lat1, float lon1, float lat2, float lon2) {
+static inline float coords2km(float lat1, float lon1, float lat2, float lon2) {
 	lat1 = lat1/180*M_PI;
 	lat2 = lat2/180*M_PI;
 	lon1 = lon1/180*M_PI;
 	lon2 = lon2/180*M_PI;
-	return 6378.388 * acos(sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon2 - lon1))
+	return 6378.388 * acos(sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon2 - lon1));
 }
 /**
   * Updates the sensors data in the global variables. Following variables

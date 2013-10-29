@@ -147,8 +147,6 @@ uint8_t lock = 0;                       //GPS lock
 int GPSerror = 0;                       //GPS error code
 int GPSinvalid = 0;                     //GPS validation
 int gpsloss = 1;
-float press_alt_cold = 0;
-float press_alt_warm = 0;
 
 uint8_t hour = 0;                       //Hour of day
 uint8_t minute = 0;                     //Minute of hour
@@ -166,8 +164,8 @@ long bmp085pressure;                    //Air pressure
 long bat_mv;                            //Battery voltage in millivolts
 
 
-float last_lat = -999;
-float last_lon = -999;
+float last_lat = 999;
+float last_lon = 999;
 
 /**
   * Setup function of the program. Initializes hardware components.
@@ -805,15 +803,8 @@ void prepare_data() {
   bmp085pressure = bmp085GetPressure(bmp085ReadUP());     //Get Pressure
   bat_mv = getUBatt();                                    //Get Battery Voltage
   
-  //Validate GPS data by Pressure Altitude with 100m tolerance
-  press_alt_cold = (233.15 / pow(bmp085pressure/101325.0,1/5.255876) - 233.15) / 0.0065 - 100; //Pressure at 233.15K / -40C
-  if(press_alt_cold < 0)
-    press_alt_cold = 0;
-  press_alt_warm = (303.15 / pow(bmp085pressure/101325.0,1/5.255876) - 303.15) / 0.0065 + 100; //Pressure at 303.15K / +30C
-  
-  
-  
-  GPSinvalid = press_alt_warm < alt || press_alt_cold > alt || ((last_lat!=999)?(coords2km(lat/1e7,lon/1e7,last_lat,last_lon) > GPS_MAX_DIST_ERROR):false);
+  //Validate GPS data
+  GPSinvalid = (last_lat!=999)?(coords2km(lat/1e7,lon/1e7,last_lat,last_lon) > GPS_MAX_DIST_ERROR):false;
 }
 
 /**
